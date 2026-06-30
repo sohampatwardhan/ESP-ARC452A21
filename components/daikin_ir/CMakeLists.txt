@@ -1,0 +1,10 @@
+idf_component_register(
+    SRCS
+        "daikin_frame.c"
+        "daikin_ir.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        esp_driver_rmt
+        esp_driver_gpio
+)

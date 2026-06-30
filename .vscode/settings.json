@@ -1,0 +1,6 @@
+{
+"idf.customExtraVars": {},
+"idf.port": "/dev/tty.wchusbserial10",
+"idf.flashType": "UART",
+"idf.currentSetup": "/Users/soham/.espressif/v6.0.1/esp-idf"
+}
