@@ -7,6 +7,8 @@
 #include "driver/uart.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_system.h"
+#include "esp_timer.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
@@ -34,6 +36,7 @@ static const char *APP_SETTINGS_NAMESPACE = "app_cfg";
 static led_strip_handle_t s_rgb_led;
 static SemaphoreHandle_t s_command_mutex;
 static daikin_state_t s_state;
+static int64_t s_state_updated_us;
 
 typedef struct {
     bool use_fahrenheit;
@@ -57,6 +60,7 @@ typedef enum {
     COMMAND_INVALID,
     COMMAND_NO_SEND,
     COMMAND_SEND,
+    COMMAND_REBOOT,
 } command_result_t;
 
 static void ir_capture_task(void *arg)
@@ -66,6 +70,13 @@ static void ir_capture_task(void *arg)
     esp_err_t err = ir_capture_run_forever();
     ESP_LOGE(TAG, "IR capture task stopped: %s", esp_err_to_name(err));
     vTaskDelete(NULL);
+}
+
+static void reboot_task(void *arg)
+{
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    esp_restart();
 }
 
 static esp_err_t init_console_uart(void)
@@ -333,6 +344,110 @@ static void save_app_u32(const char *key, uint32_t value)
     }
 }
 
+static void load_ac_state(void)
+{
+    nvs_handle_t nvs = 0;
+    esp_err_t err = nvs_open(APP_SETTINGS_NAMESPACE, NVS_READONLY, &nvs);
+    if (err != ESP_OK) {
+        return;
+    }
+
+    uint8_t value = 0;
+    if (nvs_get_u8(nvs, "ac_saved", &value) != ESP_OK || value == 0) {
+        nvs_close(nvs);
+        ESP_LOGI(TAG, "Using default AC state");
+        return;
+    }
+
+    if (nvs_get_u8(nvs, "ac_pwr", &value) == ESP_OK) {
+        s_state.power = value != 0;
+    }
+    if (nvs_get_u8(nvs, "ac_mode", &value) == ESP_OK && value <= (uint8_t)DAIKIN_MODE_FAN) {
+        s_state.mode = (daikin_mode_t)value;
+    }
+    if (nvs_get_u8(nvs, "unit_f", &value) == ESP_OK) {
+        s_state.use_fahrenheit = value != 0;
+        s_settings.use_fahrenheit = s_state.use_fahrenheit;
+    }
+    if (nvs_get_u8(nvs, "ac_tf", &value) == ESP_OK &&
+        value >= DAIKIN_MIN_TEMP_F && value <= DAIKIN_MAX_TEMP_F) {
+        s_state.target_fahrenheit = value;
+    }
+    if (nvs_get_u8(nvs, "ac_tc", &value) == ESP_OK &&
+        value >= DAIKIN_MIN_TEMP_C && value <= DAIKIN_MAX_TEMP_C) {
+        s_state.target_celsius = value;
+    }
+    if (nvs_get_u8(nvs, "ac_fan", &value) == ESP_OK && value <= (uint8_t)DAIKIN_FAN_NIGHT) {
+        s_state.fan = (daikin_fan_t)value;
+    }
+    if (nvs_get_u8(nvs, "ac_vs", &value) == ESP_OK) {
+        s_state.swing_vertical = value != 0;
+    }
+    if (nvs_get_u8(nvs, "ac_hs", &value) == ESP_OK) {
+        s_state.swing_horizontal = value != 0;
+    }
+    if (nvs_get_u8(nvs, "ac_quiet", &value) == ESP_OK) {
+        s_state.quiet = value != 0;
+    }
+    if (nvs_get_u8(nvs, "ac_sensor", &value) == ESP_OK &&
+        value <= (uint8_t)DAIKIN_SENSOR_COMFORT_AND_INTELLIGENT_EYE) {
+        s_state.sensor = (daikin_sensor_t)value;
+    }
+
+    nvs_close(nvs);
+    ESP_LOGI(TAG, "Loaded saved AC state");
+}
+
+static void save_ac_state_locked(void)
+{
+    s_settings.use_fahrenheit = s_state.use_fahrenheit;
+
+    nvs_handle_t nvs = 0;
+    esp_err_t err = nvs_open(APP_SETTINGS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err == ESP_OK) {
+        err = nvs_set_u8(nvs, "ac_saved", 1);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_u8(nvs, "ac_pwr", s_state.power ? 1 : 0);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_u8(nvs, "ac_mode", (uint8_t)s_state.mode);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_u8(nvs, "unit_f", s_state.use_fahrenheit ? 1 : 0);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_u8(nvs, "ac_tf", s_state.target_fahrenheit);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_u8(nvs, "ac_tc", s_state.target_celsius);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_u8(nvs, "ac_fan", (uint8_t)s_state.fan);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_u8(nvs, "ac_vs", s_state.swing_vertical ? 1 : 0);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_u8(nvs, "ac_hs", s_state.swing_horizontal ? 1 : 0);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_u8(nvs, "ac_quiet", s_state.quiet ? 1 : 0);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_u8(nvs, "ac_sensor", (uint8_t)s_state.sensor);
+    }
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs);
+    }
+    if (nvs != 0) {
+        nvs_close(nvs);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to save AC state: %s", esp_err_to_name(err));
+    }
+}
+
 static void apply_loaded_display_settings(void)
 {
     if (s_settings.use_fahrenheit) {
@@ -356,6 +471,35 @@ static void print_state(const daikin_state_t *state)
            sensor_name(state->sensor));
 }
 
+static bool ac_state_equal(const daikin_state_t *a, const daikin_state_t *b)
+{
+    return a->power == b->power &&
+           a->mode == b->mode &&
+           a->use_fahrenheit == b->use_fahrenheit &&
+           a->target_fahrenheit == b->target_fahrenheit &&
+           a->target_celsius == b->target_celsius &&
+           a->fan == b->fan &&
+           a->swing_vertical == b->swing_vertical &&
+           a->swing_horizontal == b->swing_horizontal &&
+           a->quiet == b->quiet &&
+           a->sensor == b->sensor;
+}
+
+static void mark_ac_state_updated_locked(void)
+{
+    s_state_updated_us = esp_timer_get_time();
+}
+
+static int64_t ac_state_updated_age_s(void)
+{
+    int64_t updated_us = s_state_updated_us;
+    if (updated_us <= 0) {
+        return 0;
+    }
+    int64_t age_us = esp_timer_get_time() - updated_us;
+    return age_us > 0 ? age_us / 1000000 : 0;
+}
+
 static void format_state_json(const daikin_state_t *state,
                               bool ok,
                               const char *message,
@@ -365,7 +509,8 @@ static void format_state_json(const daikin_state_t *state,
     snprintf(response, response_size,
              "{\"ok\":%s,\"message\":\"%s\",\"state\":{\"power\":\"%s\",\"mode\":\"%s\","
              "\"temperature\":%u,\"unit\":\"%s\",\"fan\":\"%s\",\"vswing\":%s,"
-             "\"hswing\":%s,\"quiet\":%s,\"sensor\":\"%s\"},\"ir\":{\"polarity\":\"%s\","
+             "\"hswing\":%s,\"quiet\":%s,\"sensor\":\"%s\"},\"updated_age_s\":%" PRId64
+             ",\"ir\":{\"polarity\":\"%s\","
              "\"timing\":\"%s\",\"repeat\":%u,\"gap_ms\":%" PRIu32 "}}",
              ok ? "true" : "false",
              message == NULL ? "" : message,
@@ -378,6 +523,7 @@ static void format_state_json(const daikin_state_t *state,
              state->swing_horizontal ? "true" : "false",
              state->quiet ? "true" : "false",
              sensor_name(state->sensor),
+             ac_state_updated_age_s(),
              s_settings.ir_invert_out ? "invert" : "normal",
              timing_name(s_settings.ir_timing_profile),
              (unsigned)s_settings.ir_repeat_count,
@@ -398,6 +544,7 @@ static void print_help(void)
     printf("  repeat 1..10 [gap_ms]\n");
     printf("  timing captured|nominal\n");
     printf("  loopback clear\n");
+    printf("  reboot\n");
     printf("  set <command>     # update state without sending\n");
     printf("  send | status | help\n");
 }
@@ -442,6 +589,13 @@ static void set_temperature_celsius(daikin_state_t *state, uint8_t temp_c)
     state->target_fahrenheit = (uint8_t)((temp_c * 9 / 5) + 32);
 }
 
+static void set_temperature_celsius_preserve_unit(daikin_state_t *state, uint8_t temp_c)
+{
+    bool use_fahrenheit = state->use_fahrenheit;
+    set_temperature_celsius(state, temp_c);
+    state->use_fahrenheit = use_fahrenheit;
+}
+
 void ac_control_state_set_temperature_fahrenheit(daikin_state_t *state, uint8_t temp_f)
 {
     set_temperature_fahrenheit(state, temp_f);
@@ -450,6 +604,11 @@ void ac_control_state_set_temperature_fahrenheit(daikin_state_t *state, uint8_t 
 void ac_control_state_set_temperature_celsius(daikin_state_t *state, uint8_t temp_c)
 {
     set_temperature_celsius(state, temp_c);
+}
+
+void ac_control_state_set_temperature_celsius_preserve_unit(daikin_state_t *state, uint8_t temp_c)
+{
+    set_temperature_celsius_preserve_unit(state, temp_c);
 }
 
 static bool set_temperature(daikin_state_t *state, const char *value, const char *unit)
@@ -523,6 +682,9 @@ static command_result_t parse_command(char *line, daikin_state_t *state)
     }
     if (strcmp(command, "send") == 0) {
         return strtok_r(NULL, " \t", &saveptr) == NULL ? COMMAND_SEND : COMMAND_INVALID;
+    }
+    if (strcmp(command, "reboot") == 0 || strcmp(command, "restart") == 0) {
+        return strtok_r(NULL, " \t", &saveptr) == NULL ? COMMAND_REBOOT : COMMAND_INVALID;
     }
 
     if (strcmp(command, "unit") == 0) {
@@ -788,6 +950,7 @@ static esp_err_t execute_command_line(const char *input,
 
     xSemaphoreTake(s_command_mutex, portMAX_DELAY);
 
+    daikin_state_t previous_state = s_state;
     command_result_t command = parse_command(parse_line, &s_state);
     if (update_only && command == COMMAND_SEND) {
         command = COMMAND_NO_SEND;
@@ -804,7 +967,23 @@ static esp_err_t execute_command_line(const char *input,
         return ESP_ERR_INVALID_ARG;
     }
 
+    if (command == COMMAND_REBOOT) {
+        if (console_output) {
+            printf("Rebooting...\n");
+        }
+        if (response != NULL) {
+            snprintf(response, response_size, "{\"ok\":true,\"message\":\"Rebooting\"}");
+        }
+        xSemaphoreGive(s_command_mutex);
+        xTaskCreate(reboot_task, "reboot", 2048, NULL, 5, NULL);
+        return ESP_OK;
+    }
+
     if (command == COMMAND_NO_SEND) {
+        if (!ac_state_equal(&previous_state, &s_state)) {
+            mark_ac_state_updated_locked();
+            save_ac_state_locked();
+        }
         if (response != NULL) {
             format_state_json(&s_state, true, "updated", response, response_size);
         }
@@ -843,6 +1022,10 @@ static esp_err_t execute_command_line(const char *input,
         printf("Sent ");
         print_state(&s_state);
     }
+    if (!ac_state_equal(&previous_state, &s_state)) {
+        mark_ac_state_updated_locked();
+        save_ac_state_locked();
+    }
     if (response != NULL) {
         format_state_json(&s_state, true, "sent", response, response_size);
     }
@@ -877,6 +1060,7 @@ esp_err_t ac_control_apply_state(const daikin_state_t *state, char *response, si
     }
 
     xSemaphoreTake(s_command_mutex, portMAX_DELAY);
+    daikin_state_t previous_state = s_state;
     s_state = *state;
     if (s_settings.use_fahrenheit != s_state.use_fahrenheit) {
         s_settings.use_fahrenheit = s_state.use_fahrenheit;
@@ -902,6 +1086,10 @@ esp_err_t ac_control_apply_state(const daikin_state_t *state, char *response, si
         return err;
     }
 
+    if (!ac_state_equal(&previous_state, &s_state)) {
+        mark_ac_state_updated_locked();
+        save_ac_state_locked();
+    }
     if (response != NULL && response_size > 0) {
         format_state_json(&s_state, true, "sent", response, response_size);
     }
@@ -925,8 +1113,10 @@ void app_main(void)
         ESP_LOGW(TAG, "NVS unavailable for app settings: %s", esp_err_to_name(err));
     } else {
         load_app_settings();
+        load_ac_state();
         apply_loaded_display_settings();
     }
+    s_state_updated_us = esp_timer_get_time();
 
     err = init_console_uart();
     if (err != ESP_OK) {

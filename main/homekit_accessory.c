@@ -190,7 +190,7 @@ static bool apply_homekit_write(daikin_state_t *state, const hap_write_data_t *w
     }
     if (!strcmp(uuid, HAP_CHAR_UUID_COOLING_THRESHOLD_TEMPERATURE) ||
         !strcmp(uuid, HAP_CHAR_UUID_HEATING_THRESHOLD_TEMPERATURE)) {
-        ac_control_state_set_temperature_celsius(state, clamp_target_celsius(write->val.f));
+        ac_control_state_set_temperature_celsius_preserve_unit(state, clamp_target_celsius(write->val.f));
         return true;
     }
     if (!strcmp(uuid, HAP_CHAR_UUID_ROTATION_SPEED)) {
