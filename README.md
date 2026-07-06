@@ -15,6 +15,10 @@ Default pins:
 - IR blaster output: `GPIO17`
 - IR activity RGB LED data: `GPIO5`
 
+## Circuit
+
+![ESP32 IR transmitter and status LED breadboard circuit](.github/assets/ESP-IR_bb.svg)
+
 IR transmit wiring uses GPIO17 as an active-high transistor drive. The IR LED is
 switched through a low-side transistor to ground, so the normal firmware default
 is `invert_out=0`: GPIO high turns the LED carrier on, GPIO low turns it off.
