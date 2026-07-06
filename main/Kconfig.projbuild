@@ -1,0 +1,89 @@
+menu "ESP-ARC452A21 Remote Control"
+
+    config ESP_ARC452A21_WIFI_SSID
+        string "WiFi SSID"
+        default ""
+        help
+            WiFi network name for HTTP and MQTT remote testing. Leave empty to
+            keep remote interfaces disabled.
+
+    config ESP_ARC452A21_WIFI_PASSWORD
+        string "WiFi password"
+        default ""
+        help
+            WiFi network password.
+
+    config ESP_ARC452A21_WIFI_MAX_RETRIES
+        int "WiFi connection retries before setup portal"
+        range 1 30
+        default 8
+        help
+            Number of station reconnect attempts before the fallback setup AP
+            and captive portal are enabled.
+
+    config ESP_ARC452A21_SETUP_AP_SSID
+        string "Setup portal AP SSID"
+        default "ESP-ARC452A21-Setup"
+        help
+            WiFi network name used by the fallback captive portal.
+
+    config ESP_ARC452A21_SETUP_AP_PASSWORD
+        string "Setup portal AP password"
+        default ""
+        help
+            Optional password for the setup portal AP. Leave empty for an open
+            setup network. If set, ESP-IDF requires at least 8 characters.
+
+    config ESP_ARC452A21_SETUP_AP_CHANNEL
+        int "Setup portal AP channel"
+        range 1 13
+        default 6
+        help
+            WiFi channel used by the fallback setup portal AP.
+
+    config ESP_ARC452A21_MQTT_URI
+        string "MQTT broker URI"
+        default ""
+        help
+            Optional MQTT broker URI, for example mqtt://192.168.1.20:1883.
+            Leave empty to enable HTTP only.
+
+    config ESP_ARC452A21_MQTT_TOPIC_PREFIX
+        string "MQTT topic prefix"
+        default "esp-arc452a21"
+        help
+            MQTT topics are <prefix>/command, <prefix>/status, and
+            <prefix>/availability.
+
+    config ESP_ARC452A21_HOMEKIT_ENABLE
+        bool "Enable non-certified HomeKit accessory"
+        default y
+        help
+            Expose the heat pump as an uncertified HomeKit accessory using the
+            open ESP HomeKit SDK. The accessory includes native heat/cool/auto,
+            target temperature, fan speed, display units, and vertical swing.
+
+    config ESP_ARC452A21_HOMEKIT_SETUP_CODE
+        string "HomeKit setup code"
+        default "111-22-333"
+        depends on ESP_ARC452A21_HOMEKIT_ENABLE
+        help
+            Pairing code shown in Apple Home after selecting Add Anyway for the
+            uncertified accessory prompt. Format must be xxx-xx-xxx.
+
+    config ESP_ARC452A21_HOMEKIT_SETUP_ID
+        string "HomeKit setup ID"
+        default "EA21"
+        depends on ESP_ARC452A21_HOMEKIT_ENABLE
+        help
+            Four-character setup ID used in the HomeKit setup payload.
+
+    config ESP_ARC452A21_MATTER_ENABLE
+        bool "Enable non-certified Matter accessory"
+        default n
+        help
+            Expose the heat pump as a Matter Room Air Conditioner accessory.
+            This requires the external/esp-matter submodule and its nested
+            connectedhomeip submodules to be initialized before building.
+
+endmenu

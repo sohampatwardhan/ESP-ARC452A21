@@ -36,6 +36,11 @@ typedef enum {
     DAIKIN_SENSOR_COMFORT_AND_INTELLIGENT_EYE,
 } daikin_sensor_t;
 
+typedef enum {
+    DAIKIN_TIMING_PROFILE_CAPTURED,
+    DAIKIN_TIMING_PROFILE_NOMINAL,
+} daikin_timing_profile_t;
+
 typedef struct {
     bool power;
     daikin_mode_t mode;
@@ -68,10 +73,13 @@ typedef struct {
         .carrier_duty_cycle = 0.33f,         \
         .invert_out = false,                 \
         .carrier_active_low = false,         \
-        .repeat_count = 3,                   \
+        .repeat_count = 1,                   \
         .repeat_gap_ms = 80,                 \
     }
 
 esp_err_t daikin_ir_init(const daikin_ir_config_t *config);
 void daikin_state_init_cool_fahrenheit(daikin_state_t *state, uint8_t target_fahrenheit);
+esp_err_t daikin_ir_set_invert_out(bool invert_out);
+void daikin_ir_set_repeat(uint8_t repeat_count, uint32_t repeat_gap_ms);
+esp_err_t daikin_ir_set_timing_profile(daikin_timing_profile_t profile);
 esp_err_t daikin_ir_send_state(const daikin_state_t *state);

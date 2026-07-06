@@ -162,6 +162,14 @@ def validate(decoded: DecodedCapture) -> list[str]:
         if actual[name] != expected:
             failures.append(f"{name} expected 0x{expected:02X}, got 0x{actual[name]:02X}")
 
+    label = decoded.path.stem
+    if "sensor_comfort" in label:
+        if decoded.section_1[6] != 0x10:
+            failures.append(f"section 1 comfort flag expected 0x10, got 0x{decoded.section_1[6]:02X}")
+    elif "sensor_eye" in label or "sensor_off" in label:
+        if decoded.section_1[6] != 0x00:
+            failures.append(f"section 1 comfort flag expected 0x00, got 0x{decoded.section_1[6]:02X}")
+
     return failures
 
 

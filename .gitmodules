@@ -1,0 +1,7 @@
+[submodule "external/esp-homekit-sdk"]
+	path = external/esp-homekit-sdk
+	url = https://github.com/espressif/esp-homekit-sdk.git
+[submodule "external/esp-matter"]
+	path = external/esp-matter
+	url = https://github.com/espressif/esp-matter.git
+	branch = release/v1.4.2

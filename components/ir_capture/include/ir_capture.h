@@ -15,6 +15,18 @@ typedef struct {
     uint32_t signal_range_max_ns;
 } ir_capture_config_t;
 
+enum {
+    IR_CAPTURE_DAIKIN_SECTION_1_LEN = 8,
+    IR_CAPTURE_DAIKIN_SECTION_2_LEN = 8,
+    IR_CAPTURE_DAIKIN_SECTION_3_LEN = 19,
+};
+
+typedef struct {
+    uint8_t section_1[IR_CAPTURE_DAIKIN_SECTION_1_LEN];
+    uint8_t section_2[IR_CAPTURE_DAIKIN_SECTION_2_LEN];
+    uint8_t section_3[IR_CAPTURE_DAIKIN_SECTION_3_LEN];
+} ir_capture_daikin_frame_t;
+
 #define IR_CAPTURE_MAX_SYMBOLS 2048
 #define IR_CAPTURE_MEM_BLOCK_SYMBOLS 512
 
@@ -29,5 +41,7 @@ typedef struct {
     }
 
 esp_err_t ir_capture_init(const ir_capture_config_t *config);
+void ir_capture_expect_daikin_frame(const ir_capture_daikin_frame_t *frame);
+void ir_capture_clear_expected_daikin_frame(void);
 esp_err_t ir_capture_start_once(void);
 esp_err_t ir_capture_run_forever(void);

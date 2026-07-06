@@ -137,16 +137,28 @@ esp_err_t daikin_frame_build(const daikin_state_t *state, daikin_frame_t *frame)
 {
     ESP_RETURN_ON_FALSE(state != NULL, ESP_ERR_INVALID_ARG, TAG, "state is required");
     ESP_RETURN_ON_FALSE(frame != NULL, ESP_ERR_INVALID_ARG, TAG, "frame is required");
-    ESP_RETURN_ON_FALSE(state->use_fahrenheit, ESP_ERR_NOT_SUPPORTED, TAG,
-                        "only Fahrenheit captures are validated so far");
-    ESP_RETURN_ON_FALSE(state->target_fahrenheit >= DAIKIN_MIN_TEMP_F &&
-                            state->target_fahrenheit <= DAIKIN_MAX_TEMP_F,
-                        ESP_ERR_INVALID_ARG, TAG,
-                        "target_fahrenheit must be in the 64..90 F range");
+    if (state->use_fahrenheit) {
+        ESP_RETURN_ON_FALSE(state->target_fahrenheit >= DAIKIN_MIN_TEMP_F &&
+                                state->target_fahrenheit <= DAIKIN_MAX_TEMP_F,
+                            ESP_ERR_INVALID_ARG, TAG,
+                            "target_fahrenheit must be in the 64..90 F range");
+    } else {
+        ESP_RETURN_ON_FALSE(state->target_celsius >= DAIKIN_MIN_TEMP_C &&
+                                state->target_celsius <= DAIKIN_MAX_TEMP_C,
+                            ESP_ERR_INVALID_ARG, TAG,
+                            "target_celsius must be in the 18..32 C range");
+    }
 
     memcpy(frame->section_1, SECTION_1, sizeof(frame->section_1));
     memcpy(frame->section_2, SECTION_2, sizeof(frame->section_2));
     memset(frame->section_3, 0, sizeof(frame->section_3));
+
+    if (state->sensor == DAIKIN_SENSOR_COMFORT ||
+        state->sensor == DAIKIN_SENSOR_COMFORT_AND_INTELLIGENT_EYE) {
+        frame->section_1[6] = 0x10;
+        frame->section_1[7] = daikin_frame_checksum(frame->section_1,
+                                                    DAIKIN_FRAME_SECTION_1_LEN - 1);
+    }
 
     frame->section_3[0] = 0x11;
     frame->section_3[1] = 0xDA;

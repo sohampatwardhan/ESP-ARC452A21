@@ -1,6 +1,7 @@
 #include "ir_capture.h"
 
 #include <inttypes.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -9,6 +10,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/task.h"
 
 static const char *TAG = "ir_capture";
 
@@ -17,14 +19,40 @@ static QueueHandle_t s_receive_queue;
 static rmt_receive_config_t s_receive_config;
 static size_t s_symbols_capacity;
 static rmt_symbol_word_t s_symbols[IR_CAPTURE_MAX_SYMBOLS];
+static portMUX_TYPE s_expected_mux = portMUX_INITIALIZER_UNLOCKED;
+static bool s_expected_valid;
+static uint32_t s_expected_sequence;
+static ir_capture_daikin_frame_t s_expected_frame;
 
 enum {
     DAIKIN_CAPTURE_SYMBOL_COUNT = 292,
-    DAIKIN_SECTION_1_LEN = 8,
-    DAIKIN_SECTION_2_LEN = 8,
-    DAIKIN_SECTION_3_LEN = 19,
     DAIKIN_BIT_ONE_SPACE_US = 800,
 };
+
+void ir_capture_expect_daikin_frame(const ir_capture_daikin_frame_t *frame)
+{
+    if (frame == NULL) {
+        ir_capture_clear_expected_daikin_frame();
+        return;
+    }
+
+    taskENTER_CRITICAL(&s_expected_mux);
+    s_expected_frame = *frame;
+    s_expected_valid = true;
+    ++s_expected_sequence;
+    uint32_t sequence = s_expected_sequence;
+    taskEXIT_CRITICAL(&s_expected_mux);
+
+    printf("DAIKIN_LOOPBACK_EXPECT,%" PRIu32 "\n", sequence);
+}
+
+void ir_capture_clear_expected_daikin_frame(void)
+{
+    taskENTER_CRITICAL(&s_expected_mux);
+    s_expected_valid = false;
+    taskEXIT_CRITICAL(&s_expected_mux);
+    printf("DAIKIN_LOOPBACK_CLEAR\n");
+}
 
 static bool ir_capture_on_receive_done(rmt_channel_handle_t channel,
                                        const rmt_rx_done_event_data_t *edata,
@@ -76,15 +104,81 @@ static void ir_capture_print_bytes(const char *label, const uint8_t *bytes, size
     printf("\n");
 }
 
+static bool section_matches(const uint8_t *expected, const uint8_t *actual, size_t len)
+{
+    return memcmp(expected, actual, len) == 0;
+}
+
+static void print_expected_section(const char *label, const uint8_t *bytes, size_t len)
+{
+    printf("DAIKIN_LOOPBACK_EXPECTED_%s", label);
+    for (size_t i = 0; i < len; ++i) {
+        printf(",%02X", bytes[i]);
+    }
+    printf("\n");
+}
+
+static void ir_capture_compare_expected(const uint8_t *section_1,
+                                        const uint8_t *section_2,
+                                        const uint8_t *section_3)
+{
+    ir_capture_daikin_frame_t expected;
+    uint32_t sequence = 0;
+    bool have_expected = false;
+
+    taskENTER_CRITICAL(&s_expected_mux);
+    if (s_expected_valid) {
+        expected = s_expected_frame;
+        sequence = s_expected_sequence;
+        have_expected = true;
+        s_expected_valid = false;
+    }
+    taskEXIT_CRITICAL(&s_expected_mux);
+
+    if (!have_expected) {
+        printf("DAIKIN_LOOPBACK_RESULT,no_expected\n");
+        return;
+    }
+
+    bool section_1_match = section_matches(expected.section_1, section_1,
+                                           IR_CAPTURE_DAIKIN_SECTION_1_LEN);
+    bool section_2_match = section_matches(expected.section_2, section_2,
+                                           IR_CAPTURE_DAIKIN_SECTION_2_LEN);
+    bool section_3_match = section_matches(expected.section_3, section_3,
+                                           IR_CAPTURE_DAIKIN_SECTION_3_LEN);
+    bool match = section_1_match && section_2_match && section_3_match;
+
+    printf("DAIKIN_LOOPBACK_RESULT,%s,sequence=%" PRIu32
+           ",section1=%s,section2=%s,section3=%s\n",
+           match ? "match" : "mismatch",
+           sequence,
+           section_1_match ? "ok" : "bad",
+           section_2_match ? "ok" : "bad",
+           section_3_match ? "ok" : "bad");
+
+    if (!section_1_match) {
+        print_expected_section("SECTION_1", expected.section_1,
+                               IR_CAPTURE_DAIKIN_SECTION_1_LEN);
+    }
+    if (!section_2_match) {
+        print_expected_section("SECTION_2", expected.section_2,
+                               IR_CAPTURE_DAIKIN_SECTION_2_LEN);
+    }
+    if (!section_3_match) {
+        print_expected_section("SECTION_3", expected.section_3,
+                               IR_CAPTURE_DAIKIN_SECTION_3_LEN);
+    }
+}
+
 static void ir_capture_log_daikin_decode(const rmt_symbol_word_t *symbols, size_t count)
 {
     if (count != DAIKIN_CAPTURE_SYMBOL_COUNT) {
         return;
     }
 
-    uint8_t section_1[DAIKIN_SECTION_1_LEN];
-    uint8_t section_2[DAIKIN_SECTION_2_LEN];
-    uint8_t section_3[DAIKIN_SECTION_3_LEN];
+    uint8_t section_1[IR_CAPTURE_DAIKIN_SECTION_1_LEN];
+    uint8_t section_2[IR_CAPTURE_DAIKIN_SECTION_2_LEN];
+    uint8_t section_3[IR_CAPTURE_DAIKIN_SECTION_3_LEN];
     size_t position = 6;
 
     ++position;
@@ -107,6 +201,7 @@ static void ir_capture_log_daikin_decode(const rmt_symbol_word_t *symbols, size_
            section_3[13],
            section_3[16],
            ir_capture_checksum(section_3, sizeof(section_3) - 1) == section_3[18] ? "ok" : "bad");
+    ir_capture_compare_expected(section_1, section_2, section_3);
 }
 
 static void ir_capture_log_symbols(const rmt_symbol_word_t *symbols, size_t count)
